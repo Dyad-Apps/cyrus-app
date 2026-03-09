@@ -1,7 +1,17 @@
-import { useEffect, useRef } from 'react';
-import Voice, { SpeechResultsEvent, SpeechErrorEvent } from '@react-native-voice/voice';
+import { useEffect, useRef, useState } from 'react';
+import Voice, {
+  SpeechResultsEvent,
+  SpeechErrorEvent,
+  SpeechRecognizedEvent,
+} from '@react-native-voice/voice';
 
 const WAKE_WORD = 'cyrus';
+
+export interface VoiceStatus {
+  listening: boolean;
+  partial: string;
+  error: string;
+}
 
 interface Options {
   enabled: boolean;
@@ -9,7 +19,10 @@ interface Options {
   onUtterance: (text: string) => void;
 }
 
-export function useVoiceInput({ enabled, paused, onUtterance }: Options) {
+export function useVoiceInput({ enabled, paused, onUtterance }: Options): VoiceStatus {
+  const [listening, setListening] = useState(false);
+  const [partial, setPartial] = useState('');
+  const [error, setError] = useState('');
   const activeRef = useRef(false);
   const enabledRef = useRef(enabled);
   const pausedRef = useRef(paused);
@@ -25,6 +38,8 @@ export function useVoiceInput({ enabled, paused, onUtterance }: Options) {
   const stopListening = () => {
     clearTimeout(restartTimer.current);
     activeRef.current = false;
+    setListening(false);
+    setPartial('');
     Voice.stop().catch(() => {});
   };
 
@@ -32,34 +47,72 @@ export function useVoiceInput({ enabled, paused, onUtterance }: Options) {
     if (activeRef.current || !enabledRef.current || pausedRef.current) return;
     if (retryCount.current > 5) {
       retryCount.current = 0;
-      return; // give up after 5 consecutive errors
+      setError('Speech recognition unavailable — restarting');
+      // Try again after a longer pause instead of giving up forever
+      restartTimer.current = setTimeout(() => {
+        setError('');
+        startListening();
+      }, 10000);
+      return;
     }
     activeRef.current = true;
-    Voice.start('en-US').catch(() => {
+    setListening(true);
+    setPartial('');
+    setError('');
+    Voice.start('en-US').catch((err) => {
       activeRef.current = false;
+      setListening(false);
+      setError(`Mic start failed: ${err?.message || err}`);
     });
   };
 
   // Set up Voice callbacks once
   useEffect(() => {
+    Voice.onSpeechStart = () => {
+      setListening(true);
+    };
+
+    Voice.onSpeechRecognized = (_e: SpeechRecognizedEvent) => {
+      // Speech was recognized (intermediate event)
+    };
+
+    Voice.onSpeechPartialResults = (e: { value?: string[] }) => {
+      const text = (e.value?.[0] ?? '').trim();
+      if (text) setPartial(text);
+    };
+
     Voice.onSpeechResults = (e: SpeechResultsEvent) => {
       const text = (e.value?.[0] ?? '').trim();
       retryCount.current = 0;
-      if (text.toLowerCase().startsWith(WAKE_WORD)) {
-        onUtteranceRef.current(text);
+      setPartial('');
+      if (text) {
+        // Check for wake word, or if the text is a direct command
+        if (text.toLowerCase().startsWith(WAKE_WORD)) {
+          onUtteranceRef.current(text);
+        } else {
+          // Show what was heard even if wake word wasn't detected
+          setPartial(`(no wake word) "${text}"`);
+          // Clear after a moment
+          setTimeout(() => setPartial(''), 2000);
+        }
       }
     };
 
     Voice.onSpeechEnd = () => {
       activeRef.current = false;
+      setListening(false);
       if (enabledRef.current && !pausedRef.current) {
         restartTimer.current = setTimeout(startListening, 500);
       }
     };
 
-    Voice.onSpeechError = (_e: SpeechErrorEvent) => {
+    Voice.onSpeechError = (e: SpeechErrorEvent) => {
       activeRef.current = false;
+      setListening(false);
       retryCount.current += 1;
+      const code = e.error?.code;
+      const msg = e.error?.message || 'Unknown error';
+      setError(`Voice error (${code}): ${msg}`);
       const delay = Math.min(1000 * retryCount.current, 5000);
       if (enabledRef.current && !pausedRef.current) {
         restartTimer.current = setTimeout(startListening, delay);
@@ -67,6 +120,9 @@ export function useVoiceInput({ enabled, paused, onUtterance }: Options) {
     };
 
     return () => {
+      Voice.onSpeechStart = undefined;
+      Voice.onSpeechRecognized = undefined;
+      Voice.onSpeechPartialResults = undefined;
       Voice.onSpeechResults = undefined;
       Voice.onSpeechEnd = undefined;
       Voice.onSpeechError = undefined;
@@ -77,6 +133,7 @@ export function useVoiceInput({ enabled, paused, onUtterance }: Options) {
   useEffect(() => {
     if (enabled && !paused) {
       retryCount.current = 0;
+      setError('');
       startListening();
     } else {
       stopListening();
@@ -90,4 +147,6 @@ export function useVoiceInput({ enabled, paused, onUtterance }: Options) {
       Voice.destroy().then(Voice.removeAllListeners).catch(() => {});
     };
   }, []);
+
+  return { listening, partial, error };
 }

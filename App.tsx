@@ -7,7 +7,7 @@ import { StatusBar } from 'expo-status-bar';
 import * as Speech from 'expo-speech';
 import { useBrain, BrainMessage, ConnectionStatus } from './src/useBrain';
 import Settings, { BrainConfig, loadConfig } from './src/Settings';
-import { useVoiceInput } from './src/useVoiceInput';
+import { useVoiceInput, VoiceStatus } from './src/useVoiceInput';
 
 const STATUS_COLORS: Record<ConnectionStatus, string> = {
   disconnected: '#ff4444',
@@ -30,7 +30,7 @@ export default function App() {
     brain.send(text, false);
   }, [brain.send]);
 
-  useVoiceInput({
+  const voiceStatus = useVoiceInput({
     enabled: voiceMode && brain.status === 'connected',
     paused: isSpeaking,
     onUtterance: handleVoiceUtterance,
@@ -195,6 +195,23 @@ export default function App() {
       {brain.thinking && (
         <View style={styles.thinkingBar}>
           <Text style={styles.thinkingText}>Cyrus is thinking...</Text>
+        </View>
+      )}
+
+      {voiceMode && (
+        <View style={styles.voiceBar}>
+          <View style={[styles.micDot, voiceStatus.listening && styles.micDotActive]} />
+          <Text style={styles.voiceBarText}>
+            {voiceStatus.error
+              ? voiceStatus.error
+              : voiceStatus.partial
+              ? voiceStatus.partial
+              : voiceStatus.listening
+              ? 'Listening... say "Cyrus" then your command'
+              : isSpeaking
+              ? 'Speaking...'
+              : 'Mic idle'}
+          </Text>
         </View>
       )}
 
@@ -389,6 +406,28 @@ const styles = StyleSheet.create({
     color: '#666',
     fontSize: 14,
     textAlign: 'center',
+  },
+  voiceBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    backgroundColor: '#1a1a2e',
+    gap: 8,
+  },
+  micDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: '#666',
+  },
+  micDotActive: {
+    backgroundColor: '#ff4444',
+  },
+  voiceBarText: {
+    color: '#aaa',
+    fontSize: 12,
+    flex: 1,
   },
   inputBar: {
     flexDirection: 'row',

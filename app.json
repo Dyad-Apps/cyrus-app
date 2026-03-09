@@ -12,8 +12,17 @@
       "backgroundColor": "#ffffff"
     },
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.anonymous.cyrusapp",
+      "infoPlist": {
+        "NSMicrophoneUsageDescription": "Cyrus needs microphone access for voice mode",
+        "NSSpeechRecognitionUsageDescription": "Cyrus needs speech recognition for voice input",
+        "ITSAppUsesNonExemptEncryption": false
+      }
     },
+    "plugins": [
+      "@react-native-voice/voice"
+    ],
     "android": {
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
@@ -22,10 +31,18 @@
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
       "predictiveBackGestureEnabled": false,
-      "package": "com.anonymous.cyrusapp"
+      "package": "com.anonymous.cyrusapp",
+      "permissions": [
+        "android.permission.RECORD_AUDIO"
+      ]
     },
     "web": {
       "favicon": "./assets/favicon.png"
+    },
+    "extra": {
+      "eas": {
+        "projectId": "026482a0-bcd0-4c22-9bc9-c351311aff9c"
+      }
     }
   }
 }
