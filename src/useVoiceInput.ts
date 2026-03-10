@@ -1,79 +1,34 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import Voice, {
   SpeechResultsEvent,
   SpeechErrorEvent,
-  SpeechRecognizedEvent,
 } from '@react-native-voice/voice';
-
-const WAKE_WORD = 'cyrus';
+import * as Haptics from 'expo-haptics';
 
 export interface VoiceStatus {
   listening: boolean;
   partial: string;
   error: string;
+  start: () => void;
+  stop: () => void;
 }
 
 interface Options {
-  enabled: boolean;
-  paused: boolean;
   onUtterance: (text: string) => void;
 }
 
-export function useVoiceInput({ enabled, paused, onUtterance }: Options): VoiceStatus {
+export function useVoiceInput({ onUtterance }: Options): VoiceStatus {
   const [listening, setListening] = useState(false);
   const [partial, setPartial] = useState('');
   const [error, setError] = useState('');
-  const activeRef = useRef(false);
-  const enabledRef = useRef(enabled);
-  const pausedRef = useRef(paused);
   const onUtteranceRef = useRef(onUtterance);
-  const restartTimer = useRef<ReturnType<typeof setTimeout>>();
-  const retryCount = useRef(0);
-
-  // Keep refs in sync without triggering effects
-  enabledRef.current = enabled;
-  pausedRef.current = paused;
   onUtteranceRef.current = onUtterance;
-
-  const stopListening = () => {
-    clearTimeout(restartTimer.current);
-    activeRef.current = false;
-    setListening(false);
-    setPartial('');
-    Voice.stop().catch(() => {});
-  };
-
-  const startListening = () => {
-    if (activeRef.current || !enabledRef.current || pausedRef.current) return;
-    if (retryCount.current > 5) {
-      retryCount.current = 0;
-      setError('Speech recognition unavailable — restarting');
-      // Try again after a longer pause instead of giving up forever
-      restartTimer.current = setTimeout(() => {
-        setError('');
-        startListening();
-      }, 10000);
-      return;
-    }
-    activeRef.current = true;
-    setListening(true);
-    setPartial('');
-    setError('');
-    Voice.start('en-US').catch((err) => {
-      activeRef.current = false;
-      setListening(false);
-      setError(`Mic start failed: ${err?.message || err}`);
-    });
-  };
 
   // Set up Voice callbacks once
   useEffect(() => {
     Voice.onSpeechStart = () => {
       setListening(true);
-    };
-
-    Voice.onSpeechRecognized = (_e: SpeechRecognizedEvent) => {
-      // Speech was recognized (intermediate event)
+      setError('');
     };
 
     Voice.onSpeechPartialResults = (e: { value?: string[] }) => {
@@ -83,70 +38,64 @@ export function useVoiceInput({ enabled, paused, onUtterance }: Options): VoiceS
 
     Voice.onSpeechResults = (e: SpeechResultsEvent) => {
       const text = (e.value?.[0] ?? '').trim();
-      retryCount.current = 0;
+      setListening(false);
       setPartial('');
       if (text) {
-        // Check for wake word, or if the text is a direct command
-        if (text.toLowerCase().startsWith(WAKE_WORD)) {
-          onUtteranceRef.current(text);
-        } else {
-          // Show what was heard even if wake word wasn't detected
-          setPartial(`(no wake word) "${text}"`);
-          // Clear after a moment
-          setTimeout(() => setPartial(''), 2000);
-        }
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        onUtteranceRef.current(text);
       }
     };
 
     Voice.onSpeechEnd = () => {
-      activeRef.current = false;
       setListening(false);
-      if (enabledRef.current && !pausedRef.current) {
-        restartTimer.current = setTimeout(startListening, 500);
-      }
     };
 
     Voice.onSpeechError = (e: SpeechErrorEvent) => {
-      activeRef.current = false;
       setListening(false);
-      retryCount.current += 1;
+      setPartial('');
       const code = e.error?.code;
       const msg = e.error?.message || 'Unknown error';
-      setError(`Voice error (${code}): ${msg}`);
-      const delay = Math.min(1000 * retryCount.current, 5000);
-      if (enabledRef.current && !pausedRef.current) {
-        restartTimer.current = setTimeout(startListening, delay);
+      // code 7 = no speech detected, not really an error
+      if (code === '7' || code === 7) {
+        setError('No speech detected — tap mic to try again');
+      } else {
+        setError(`Voice error (${code}): ${msg}`);
       }
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
     };
 
     return () => {
       Voice.onSpeechStart = undefined;
-      Voice.onSpeechRecognized = undefined;
       Voice.onSpeechPartialResults = undefined;
       Voice.onSpeechResults = undefined;
       Voice.onSpeechEnd = undefined;
       Voice.onSpeechError = undefined;
     };
-  }, []); // only run once
+  }, []);
 
-  // Start/stop based on enabled+paused
-  useEffect(() => {
-    if (enabled && !paused) {
-      retryCount.current = 0;
-      setError('');
-      startListening();
-    } else {
-      stopListening();
+  const start = useCallback(async () => {
+    setError('');
+    setPartial('');
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    try {
+      await Voice.start('en-US');
+    } catch (err: any) {
+      setError(`Mic start failed: ${err?.message || err}`);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
     }
-  }, [enabled, paused]);
+  }, []);
+
+  const stop = useCallback(() => {
+    Voice.stop().catch(() => {});
+    setListening(false);
+  }, []);
 
   // Cleanup on unmount
   useEffect(() => {
     return () => {
-      clearTimeout(restartTimer.current);
       Voice.destroy().then(Voice.removeAllListeners).catch(() => {});
     };
   }, []);
 
-  return { listening, partial, error };
+  return { listening, partial, error, start, stop };
 }

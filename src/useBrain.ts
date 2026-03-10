@@ -5,9 +5,10 @@ export type ConnectionStatus = 'disconnected' | 'connecting' | 'connected';
 
 export interface BrainMessage {
   id: string;
-  type: 'sent' | 'received' | 'system';
+  type: 'sent' | 'received' | 'system' | 'permission';
   text: string;
   timestamp: number;
+  subtype?: 'compacting' | 'tool' | 'connection';
 }
 
 interface UseBrainOptions {
@@ -22,6 +23,7 @@ export function useBrain({ host, port }: UseBrainOptions) {
   const [status, setStatus] = useState<ConnectionStatus>('disconnected');
   const [messages, setMessages] = useState<BrainMessage[]>([]);
   const [thinking, setThinking] = useState(false);
+  const [compacting, setCompacting] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimer = useRef<ReturnType<typeof setTimeout>>();
   const pingTimer = useRef<ReturnType<typeof setInterval>>();
@@ -85,18 +87,33 @@ export function useBrain({ host, port }: UseBrainOptions) {
           const data = JSON.parse(event.data);
           if (data.type === 'speak') {
             setThinking(false);
+            setCompacting(false);
             addMessage({ type: 'received', text: data.text });
           } else if (data.type === 'prompt') {
             addMessage({ type: 'sent', text: data.text });
+          } else if (data.type === 'permission') {
+            setThinking(false);
+            addMessage({ type: 'permission', text: data.text });
           } else if (data.type === 'thinking') {
             setThinking(true);
           } else if (data.type === 'tool') {
+            const project = data.project ? `[${data.project}] ` : '';
             const label = data.command
-              ? `${data.tool}: ${data.command.slice(0, 80)}`
-              : data.tool;
-            addMessage({ type: 'system', text: `Running: ${label}` });
+              ? `${project}${data.tool}: ${data.command.slice(0, 80)}`
+              : `${project}${data.tool}`;
+            addMessage({ type: 'system', text: `Running: ${label}`, subtype: 'tool' });
           } else if (data.type === 'status') {
-            addMessage({ type: 'system', text: data.text || JSON.stringify(data) });
+            const isCompacting = data.status === 'compacting';
+            if (isCompacting) {
+              setCompacting(true);
+            } else {
+              setCompacting(false);
+            }
+            addMessage({
+              type: 'system',
+              text: data.text || JSON.stringify(data),
+              subtype: isCompacting ? 'compacting' : undefined,
+            });
           }
         } catch {
           addMessage({ type: 'received', text: String(event.data) });
@@ -151,5 +168,5 @@ export function useBrain({ host, port }: UseBrainOptions) {
     };
   }, []);
 
-  return { status, messages, thinking, connect, disconnect, send, addMessage };
+  return { status, messages, thinking, compacting, connect, disconnect, send, addMessage };
 }
