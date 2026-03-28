@@ -56,7 +56,7 @@ export function useVoiceInput({ onUtterance }: Options): VoiceStatus {
       const code = e.error?.code;
       const msg = e.error?.message || 'Unknown error';
       // code 7 = no speech detected, not really an error
-      if (code === '7' || code === 7) {
+      if (code === '7' || String(code) === '7') {
         setError('No speech detected — tap mic to try again');
       } else {
         setError(`Voice error (${code}): ${msg}`);
@@ -65,11 +65,11 @@ export function useVoiceInput({ onUtterance }: Options): VoiceStatus {
     };
 
     return () => {
-      Voice.onSpeechStart = undefined;
-      Voice.onSpeechPartialResults = undefined;
-      Voice.onSpeechResults = undefined;
-      Voice.onSpeechEnd = undefined;
-      Voice.onSpeechError = undefined;
+      Voice.onSpeechStart = null as any;
+      Voice.onSpeechPartialResults = null as any;
+      Voice.onSpeechResults = null as any;
+      Voice.onSpeechEnd = null as any;
+      Voice.onSpeechError = null as any;
     };
   }, []);
 

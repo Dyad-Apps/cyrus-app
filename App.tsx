@@ -24,6 +24,9 @@ export default function App() {
   const [voiceMode, setVoiceMode] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
   const flatListRef = useRef<FlatList>(null);
+  const isNearBottom = useRef(true);
+  const prevMsgCount = useRef(0);
+  const prevSession = useRef('');
 
   const brain = useBrain(config);
 
@@ -50,8 +53,8 @@ export default function App() {
 
 
   useEffect(() => {
-    if (!voiceMode || brain.messages.length === 0) return;
-    const last = brain.messages[brain.messages.length - 1];
+    if (!voiceMode || brain.visibleMessages.length === 0) return;
+    const last = brain.visibleMessages[brain.visibleMessages.length - 1];
     if (last.type === 'received') {
       const words = last.text.split(/\s+/);
       const spoken = words.length > 50
@@ -60,7 +63,7 @@ export default function App() {
       setIsSpeaking(true);
       Speech.speak(spoken, { rate: 1.0, pitch: 1.0, onDone: () => setIsSpeaking(false), onStopped: () => setIsSpeaking(false), onError: () => setIsSpeaking(false) });
     }
-  }, [brain.messages.length, voiceMode]);
+  }, [brain.visibleMessages.length, voiceMode]);
 
   const handleSend = () => {
     if (!inputText.trim()) return;
@@ -89,8 +92,12 @@ export default function App() {
     voice.start();
   };
 
-  const handlePermission = (answer: string) => {
-    brain.send(answer, false);
+  const handlePermission = (answer: string, session?: string) => {
+    // Switch brain to the correct session before sending the response
+    if (session && session !== brain.selectedSession) {
+      brain.switchSession(session);
+    }
+    brain.send(answer, true);
   };
 
   const renderMessage = ({ item }: { item: BrainMessage }) => {
@@ -128,13 +135,13 @@ export default function App() {
             <View style={styles.permissionBtns}>
               <TouchableOpacity
                 style={styles.permissionYes}
-                onPress={() => handlePermission('yes')}
+                onPress={() => handlePermission('yes', item.session)}
               >
                 <Text style={styles.permissionBtnText}>Yes</Text>
               </TouchableOpacity>
               <TouchableOpacity
                 style={styles.permissionNo}
-                onPress={() => handlePermission('no')}
+                onPress={() => handlePermission('no', item.session)}
               >
                 <Text style={styles.permissionBtnText}>No</Text>
               </TouchableOpacity>
@@ -161,7 +168,24 @@ export default function App() {
         <View style={styles.headerLeft}>
           <View style={[styles.statusDot, { backgroundColor: STATUS_COLORS[brain.status] }]} />
           <Text style={styles.headerTitle}>Cyrus</Text>
-          <Text style={styles.headerStatus}>{brain.status}</Text>
+          {brain.sessions.length > 0 && (
+            <View style={styles.sessionPicker}>
+              {brain.sessions.map(s => (
+                <TouchableOpacity
+                  key={s}
+                  style={[styles.sessionTab, brain.selectedSession === s && styles.sessionTabActive]}
+                  onPress={() => brain.switchSession(s)}
+                >
+                  <Text style={[styles.sessionTabText, brain.selectedSession === s && styles.sessionTabTextActive]}>
+                    {s}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          )}
+          {brain.sessions.length === 0 && (
+            <Text style={styles.headerStatus}>{brain.status}</Text>
+          )}
         </View>
         <View style={styles.headerRight}>
           <TouchableOpacity
@@ -189,12 +213,34 @@ export default function App() {
 
       <FlatList
         ref={flatListRef}
-        data={brain.messages}
+        data={brain.visibleMessages}
         renderItem={renderMessage}
         keyExtractor={item => item.id}
         style={styles.messageList}
         contentContainerStyle={styles.messageContent}
-        onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: true })}
+        onContentSizeChange={() => {
+          const currentCount = brain.visibleMessages.length;
+          const sessionChanged = brain.selectedSession !== prevSession.current;
+          if (sessionChanged) {
+            // Tab switch — don't force scroll, just update tracking
+            prevSession.current = brain.selectedSession;
+            prevMsgCount.current = currentCount;
+            return;
+          }
+          const hasNewMessage = currentCount > prevMsgCount.current;
+          prevMsgCount.current = currentCount;
+          // Always scroll for permission messages; otherwise only when near bottom
+          const lastMsg = brain.visibleMessages[brain.visibleMessages.length - 1];
+          const isPermission = lastMsg?.type === 'permission';
+          if (hasNewMessage && (isNearBottom.current || isPermission)) {
+            flatListRef.current?.scrollToEnd({ animated: true });
+          }
+        }}
+        onScroll={(e) => {
+          const { contentOffset, contentSize, layoutMeasurement } = e.nativeEvent;
+          isNearBottom.current = contentOffset.y + layoutMeasurement.height >= contentSize.height - 80;
+        }}
+        scrollEventThrottle={100}
         ListEmptyComponent={
           <View style={styles.emptyState}>
             <Text style={styles.emptyTitle}>Cyrus Mobile</Text>
@@ -388,6 +434,28 @@ const styles = StyleSheet.create({
   headerStatus: {
     color: '#888',
     fontSize: 12,
+  },
+  sessionPicker: {
+    flexDirection: 'row',
+    gap: 4,
+    marginLeft: 4,
+  },
+  sessionTab: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
+    backgroundColor: '#2a2a2a',
+  },
+  sessionTabActive: {
+    backgroundColor: '#4a9eff',
+  },
+  sessionTabText: {
+    color: '#888',
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  sessionTabTextActive: {
+    color: '#fff',
   },
   headerRight: {
     flexDirection: 'row',
